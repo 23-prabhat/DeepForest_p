@@ -172,7 +172,8 @@ def split_raster(
         root_dir: Root directory for annotations file
         patch_size: Size of square patches
         patch_overlap: Overlap between patches (0-1)
-        allow_empty: Include patches with no annotations
+        allow_empty: Include patches with no annotations. If the raster has no rows
+            in a shared annotation table, infer the empty row format from that table.
         image_name: Name for the raster image
         save_dir: Directory to save patches
 
@@ -264,6 +265,7 @@ def split_raster(
         image_name=image_name,
         save_dir=save_dir,
         allow_empty=allow_empty,
+        empty_annotation_source=annotations if image_annotations.empty else None,
     )
 
 
@@ -333,12 +335,22 @@ def process_without_annotations(numpy_image, windows, image_name, save_dir):
 
 
 def process_with_annotations(
-    numpy_image, windows, image_annotations, image_name, save_dir, allow_empty
+    numpy_image,
+    windows,
+    image_annotations,
+    image_name,
+    save_dir,
+    allow_empty,
+    *,
+    empty_annotation_source: gpd.GeoDataFrame | None = None,
 ):
     """Process raster with annotations."""
     annotations_files = []
     crop_filenames = []
     image_basename = os.path.splitext(image_name)[0]
+    if empty_annotation_source is None:
+        empty_annotation_source = image_annotations
+    empty_annotation = None
 
     for index, window in enumerate(windows):
         crop = numpy_image[window.indices()]
@@ -346,16 +358,17 @@ def process_with_annotations(
             continue
 
         crop_annotations = select_annotations(image_annotations, window=window)
-        crop_annotations["image_path"] = f"{image_basename}_{index}.png"
 
         if crop_annotations.empty:
-            if allow_empty:
-                crop_annotations = create_empty_annotation(
-                    image_annotations, image_basename, index
-                )
-            else:
+            if not allow_empty:
                 continue
+            if empty_annotation is None:
+                empty_annotation = create_empty_annotation(
+                    empty_annotation_source, image_basename, index
+                )
+            crop_annotations = empty_annotation.copy()
 
+        crop_annotations["image_path"] = f"{image_basename}_{index}.png"
         annotations_files.append(crop_annotations)
         crop_filename = save_crop(save_dir, image_name, index, crop)
         crop_filenames.append(crop_filename)
@@ -379,6 +392,8 @@ def create_empty_annotation(image_annotations, image_basename, index):
     crop_annotations.loc[0, "image_path"] = f"{image_basename}_{index}.png"
 
     if geom_type == "box":
+        if "geometry" in crop_annotations.columns:
+            crop_annotations.loc[0, "geometry"] = geometry.box(0, 0, 0, 0)
         crop_annotations.loc[0, "xmin"] = 0
         crop_annotations.loc[0, "ymin"] = 0
         crop_annotations.loc[0, "xmax"] = 0

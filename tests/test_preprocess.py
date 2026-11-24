@@ -191,6 +191,34 @@ def test_split_raster_empty(tmp_path, config, allow_empty):
         assert (tmp_path / "OSBS_029_1.png").exists()
 
 
+def test_split_raster_allow_empty_without_matching_rows(tmp_path):
+    annotation_path = tmp_path / "annotations.csv"
+    annotation_path.write_text(
+        "image_path,xmin,ymin,xmax,ymax,label\n"
+        "has-trees.png,10,10,20,20,Oak\n",
+        encoding="utf-8",
+    )
+
+    output = preprocess.split_raster(
+        annotations_file=annotation_path,
+        numpy_image=np.zeros((3, 96, 96), dtype=np.uint8),
+        image_name="no-trees.png",
+        patch_size=48,
+        patch_overlap=0,
+        allow_empty=True,
+        save_dir=tmp_path,
+    )
+
+    expected_paths = [f"no-trees_{index}.png" for index in range(4)]
+    assert output["image_path"].tolist() == expected_paths
+    assert all((tmp_path / name).is_file() for name in expected_paths)
+
+    saved = utilities.read_file(tmp_path / "no-trees.csv")
+    assert saved["image_path"].tolist() == expected_paths
+    assert saved["label"].tolist() == ["Oak"] * 4
+    assert (saved.geometry.bounds == 0).all().all()
+
+
 def test_split_size_error(config, tmp_path, geodataframe):
     with pytest.raises(ValueError):
         annotations_file = preprocess.split_raster(
